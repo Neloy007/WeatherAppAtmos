@@ -1,5 +1,6 @@
 package com.example.weatherapp.ui.screen
 
+import android.Manifest
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.BorderStroke
@@ -26,24 +27,53 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.example.weatherapp.ui.state.WeatherState
+import com.google.accompanist.permissions.*
 import kotlinx.coroutines.delay
-import kotlin.math.sin
 import kotlin.math.PI
+import kotlin.math.sin
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalPermissionsApi::class)
 @Composable
 fun WeatherScreen(
     state: WeatherState,
-    onSearch: (String) -> Unit
+    onSearch: (String) -> Unit,
+    onRequestLocation: () -> Unit
 ) {
     var city by remember { mutableStateOf("") }
     var isSearchActive by remember { mutableStateOf(false) }
+    var isFirstLoad by remember { mutableStateOf(true) }
+
+    val context = LocalContext.current
+    val locationPermissionState = rememberPermissionState(Manifest.permission.ACCESS_FINE_LOCATION)
+
+    // Auto-request location on first load
+    LaunchedEffect(Unit) {
+        if (isFirstLoad) {
+            when {
+                locationPermissionState.status.isGranted -> {
+                    onRequestLocation()
+                }
+                !locationPermissionState.status.shouldShowRationale -> {
+                    locationPermissionState.launchPermissionRequest()
+                }
+            }
+            isFirstLoad = false
+        }
+    }
+
+    // Handle permission result
+    LaunchedEffect(locationPermissionState.status) {
+        if (locationPermissionState.status.isGranted && state.weather == null && !state.isLoading) {
+            onRequestLocation()
+        }
+    }
 
     val gradientColors = remember(state.weather?.condition) {
         weatherGradient(state.weather?.condition ?: "")
@@ -115,14 +145,21 @@ fun WeatherScreen(
                 .padding(bottom = 20.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Header with search
+            // Header with search and location button
             AnimatedVisibility(
                 visible = !isSearchActive,
                 enter = fadeIn() + slideInVertically(),
                 exit = fadeOut() + slideOutVertically()
             ) {
                 WeatherHeader(
-                    onSearchClick = { isSearchActive = true }
+                    onSearchClick = { isSearchActive = true },
+                    onLocationClick = {
+                        if (locationPermissionState.status.isGranted) {
+                            onRequestLocation()
+                        } else {
+                            locationPermissionState.launchPermissionRequest()
+                        }
+                    }
                 )
             }
 
@@ -143,9 +180,52 @@ fun WeatherScreen(
                     },
                     onDismiss = { isSearchActive = false }
                 )
+                if (state.isLoading && state.weather == null) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            text = "Getting your location...",
+                            color = Color.White.copy(alpha = 0.8f),
+                            fontSize = 14.sp,
+                            modifier = Modifier.padding(16.dp)
+                        )
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(32.dp),
+                            color = Color.White.copy(alpha = 0.8f),
+                            strokeWidth = 2.dp
+                        )
+                    }
+                }
             }
 
             Spacer(modifier = Modifier.height(20.dp))
+
+            // Permission rationale card
+            if (!locationPermissionState.status.isGranted && locationPermissionState.status.shouldShowRationale) {
+                PermissionRationaleCard(
+                    onRequestPermission = { locationPermissionState.launchPermissionRequest() }
+                )
+            }
+
+            // Location loading indicator
+            AnimatedVisibility(
+                visible = state.isLoading && state.weather == null && !isSearchActive,
+                enter = fadeIn() + scaleIn(),
+                exit = fadeOut() + scaleOut()
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        text = "Getting weather for your location...",
+                        color = Color.White.copy(alpha = 0.8f),
+                        fontSize = 16.sp,
+                        modifier = Modifier.padding(16.dp)
+                    )
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(40.dp),
+                        color = Color.White.copy(alpha = 0.8f),
+                        strokeWidth = 3.dp
+                    )
+                }
+            }
 
             // Main weather content with animation
             AnimatedContent(
@@ -167,9 +247,9 @@ fun WeatherScreen(
                 }
             }
 
-            // Loading indicator
+            // Loading indicator for search
             AnimatedVisibility(
-                visible = state.isLoading,
+                visible = state.isLoading && isSearchActive,
                 enter = fadeIn() + scaleIn(),
                 exit = fadeOut() + scaleOut()
             ) {
@@ -196,7 +276,13 @@ fun WeatherScreen(
                     ErrorCard(
                         error = error,
                         onRetry = {
-                            if (city.isNotBlank()) onSearch(city)
+                            if (city.isNotBlank()) {
+                                onSearch(city)
+                            } else if (locationPermissionState.status.isGranted) {
+                                onRequestLocation()
+                            } else {
+                                locationPermissionState.launchPermissionRequest()
+                            }
                         }
                     )
                 }
@@ -206,7 +292,10 @@ fun WeatherScreen(
 }
 
 @Composable
-fun WeatherHeader(onSearchClick: () -> Unit) {
+fun WeatherHeader(
+    onSearchClick: () -> Unit,
+    onLocationClick: () -> Unit
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -222,17 +311,90 @@ fun WeatherHeader(onSearchClick: () -> Unit) {
             modifier = Modifier.shadow(4.dp, CircleShape)
         )
 
-        IconButton(
-            onClick = onSearchClick,
-            modifier = Modifier
-                .clip(CircleShape)
-                .background(Color.White.copy(alpha = 0.2f))
+        Row {
+            IconButton(
+                onClick = onLocationClick,
+                modifier = Modifier
+                    .clip(CircleShape)
+                    .background(Color.White.copy(alpha = 0.2f))
+            ) {
+                Icon(
+                    Icons.Default.MyLocation,
+                    contentDescription = "Current Location",
+                    tint = Color.White
+                )
+            }
+
+            Spacer(modifier = Modifier.width(8.dp))
+
+            IconButton(
+                onClick = onSearchClick,
+                modifier = Modifier
+                    .clip(CircleShape)
+                    .background(Color.White.copy(alpha = 0.2f))
+            ) {
+                Icon(
+                    Icons.Default.Search,
+                    contentDescription = "Search",
+                    tint = Color.White
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun PermissionRationaleCard(onRequestPermission: () -> Unit) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = Color(0xFFFFA726).copy(alpha = 0.95f)
+        )
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Icon(
-                Icons.Default.Search,
-                contentDescription = "Search",
-                tint = Color.White
+                Icons.Default.LocationOn,
+                contentDescription = "Location",
+                tint = Color.White,
+                modifier = Modifier.size(40.dp)
             )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Text(
+                text = "Location Permission Needed",
+                color = Color.White,
+                fontWeight = FontWeight.Bold,
+                fontSize = 18.sp
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Text(
+                text = "We need your location to show weather for your current city automatically.",
+                color = Color.White,
+                textAlign = TextAlign.Center,
+                fontSize = 14.sp
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            Button(
+                onClick = onRequestPermission,
+                shape = RoundedCornerShape(20.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Color.White,
+                    contentColor = Color(0xFFFFA726)
+                )
+            ) {
+                Text("Grant Permission")
+            }
         }
     }
 }
@@ -266,7 +428,6 @@ fun SearchBar(
                 )
             }
 
-            // Fixed: Proper weight modifier syntax
             TextField(
                 value = city,
                 onValueChange = onCityChange,
@@ -276,8 +437,7 @@ fun SearchBar(
                         color = Color.White.copy(alpha = 0.7f)
                     )
                 },
-                modifier = Modifier
-                    .weight(1f),  // Fixed: Added Modifier. before weight
+                modifier = Modifier.weight(1f),
                 shape = RoundedCornerShape(24.dp),
                 colors = TextFieldDefaults.colors(
                     focusedTextColor = Color.White,
@@ -337,8 +497,16 @@ fun WeatherContent(
 
         Spacer(modifier = Modifier.height(8.dp))
 
-        // Current date and time
-        val currentDateTime by remember { mutableStateOf(getCurrentDateTime()) }
+        // Current date and time with auto-update
+        var currentDateTime by remember { mutableStateOf(getCurrentDateTime()) }
+
+        LaunchedEffect(Unit) {
+            while (true) {
+                delay(60000) // Update every minute
+                currentDateTime = getCurrentDateTime()
+            }
+        }
+
         Text(
             text = currentDateTime,
             fontSize = 14.sp,
@@ -458,7 +626,6 @@ fun MainWeatherInfoCard(weather: com.example.weatherapp.domain.model.Weather) {
             .padding(horizontal = 16.dp),
         horizontalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        // Each card will take equal width without using weight
         WeatherInfoCard(
             title = "Humidity",
             value = "${weather.humidity}%",
@@ -494,8 +661,7 @@ fun WeatherInfoCard(
     modifier: Modifier = Modifier
 ) {
     Card(
-        modifier = modifier
-            .height(100.dp),
+        modifier = modifier.height(100.dp),
         shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(
             containerColor = Color.White.copy(alpha = 0.12f)
@@ -534,6 +700,7 @@ fun WeatherInfoCard(
         }
     }
 }
+
 @Composable
 fun HourlyForecastSection() {
     Card(
@@ -705,6 +872,12 @@ fun WeatherDetailsSection(weather: com.example.weatherapp.domain.model.Weather) 
                 label = "UV Index",
                 value = "5",
                 icon = Icons.Default.BrightnessMedium
+            )
+
+            WeatherDetailItem(
+                label = "Pressure",
+                value = "1013 hPa",
+                icon = Icons.Default.Speed
             )
         }
     }

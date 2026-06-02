@@ -17,12 +17,17 @@ class MainActivity : ComponentActivity() {
 
             WeatherAppTheme {
 
-                val viewModel: WeatherViewModel = viewModel()
+                val viewModel: WeatherViewModel = viewModel(
+                    factory = WeatherViewModel.Factory(applicationContext)
+                )
 
                 WeatherScreen(
                     state = viewModel.state,
-                    onSearch = {
-                        viewModel.getWeather(it)
+                    onSearch = { city ->
+                        viewModel.getWeather(city)
+                    },
+                    onRequestLocation = {
+                        viewModel.loadWeatherForCurrentLocation()
                     }
                 )
             }

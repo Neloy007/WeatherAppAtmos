@@ -70,4 +70,16 @@ dependencies {
 
     implementation("androidx.compose.material:material-icons-extended")
 
+    // Location services
+    implementation("com.google.android.gms:play-services-location:21.2.0")
+
+    // Coroutines - already have this, but ensure it's the latest
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.7.3")
+
+    // Accompanist Permissions (for handling permissions in Compose)
+    implementation("com.google.accompanist:accompanist-permissions:0.35.0-alpha")
+
+
+
 }
